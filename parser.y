@@ -11,7 +11,10 @@ const char* no="NO";
 int line=0;
 int nextstat=0;
 int startstat=0;
-
+int truelist[256], falselist[256];
+int top=0;
+int endlist[256];
+int endtop=0;
 // 定义符号表项的值
 typedef union Value{
     int int_value;
@@ -53,7 +56,7 @@ typedef struct Quadruple {
 // 在parser.y文件中添加全局变量
 Quadruple* quadruple_list = NULL;
 
-Symbol* create_label(int label_number);
+Symbol* create_label(int label_number, char*);
 // 添加新的辅助函数
 void emit_goto(int target);
 void emit_true(int target, Symbol* tmp);
@@ -97,7 +100,7 @@ void printQuadruple();
 %type <str> id_list variable_type
 %type <str> INTEGER BOOL CHAR
 %type <str> ID CHAR_CONSTANT
-%type <num> if_bool while_bool
+%type <num> if_bool while_bool if_bool_statement_else until_bool_exp
 
 
 %start program
@@ -107,6 +110,8 @@ void printQuadruple();
 program: PROGRAM ID SEMICOLON variable_declaration BEGINN statement_list END DOT {
     //<程序> → program <标识符> ; <变量说明> <复合语句>
     // 语义动作 
+    printf("(program, %s, -, -)\n", $2);
+    emit("sys", NULL, NULL, NULL);
 }|
     error{
         yyerror("Program error");
@@ -158,34 +163,52 @@ id_list: ID COMMA id_list {
 statement: id ASSIGN ari_exp  {
     //<语句> → <赋值句>│<if句>│<while句>│<repeat句>│<复合句>
     
-    if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, printf("3: %d\n",$$), ++nextstat;
+    if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, ++nextstat;
     else yyerror("Type error");
     }|
     id ASSIGN bool_exp {
             
-            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, printf("3: %d\n",$$), ++nextstat;
+            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, ++nextstat;
             else yyerror("Type error");
     }|
     id ASSIGN char_exp {
             
-            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, printf("3: %d\n",$$), ++nextstat;
+            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, ++nextstat;
             else yyerror("Type error");
             
     }|
               if_bool THEN statement {
                 //<if句>→ <布尔表达式> then <语句>│if <布尔表达式> then <语句> else <语句>
-                //if_bool时添加跳转语句 
+                //if_bool返回假链代表的四元式的序号，真链为假链四元式序号+1
+                $$=$1;
+                backpatch(truelist[top--], $3);
+                backpatch(falselist[top--], nextstat);
+                startstat=nextstat;
               } |
-              if_bool THEN statement ELSE statement {
+              if_bool_statement_else statement {
                   //if_bool时添加跳转语句
+                  $$=$1;
+                  backpatch(endlist[endtop--], nextstat);
+                  startstat=nextstat;
               } |
               while_bool DO statement {
                 //<while句> → while <布尔表达式> do <语句>
                 //while_bool时添加跳转语句
+                $$=$1;
+                
+                emit_goto($$);
+                ++nextstat;
+                backpatch(truelist[top--], $3);
+                backpatch(falselist[top--], nextstat);
+                startstat=nextstat;
               } |
-              REPEAT statement UNTIL bool_term {
+              REPEAT statement until_bool_exp {
                 //<repeat句> → repeat <语句> until <布尔表达式>
                 
+                $$=$2;
+                backpatch(truelist[top--], nextstat);
+                backpatch(falselist[top--], $2);
+                startstat=nextstat;
               } |
               BEGINN statement_list END {
                 //<复合句> → begin <语句表> end
@@ -197,28 +220,68 @@ statement: id ASSIGN ari_exp  {
 statement_list: statement SEMICOLON statement_list {
     //<语句表> → <语句> ；<语句表>│<语句>
     $$=startstat;
-    printf("1: %d\n",$$);
+    
 } |
                 statement {
                     $$=startstat;
-                    printf("2: %d\n",$$);
+                    
                 }
 
 if_bool: IF bool_exp{
-    
+    $$=startstat;
+
+    emit_true(nextstat+2, $2);//条件为真，跳过假链
     ++nextstat;
-    $$=nextstat;
-    emit_goto(nextstat);//真链
+
+    falselist[++top]=nextstat;
+    emit_goto(falselist[top]);//假链
     ++nextstat;
-    emit_goto(nextstat);//假链
+
+    truelist[++top]=nextstat;
+    emit_goto(truelist[top]);//真链
     ++nextstat;
-    
+}
+
+if_bool_statement_else: if_bool THEN statement ELSE{
+    $$=$1;
+    backpatch(truelist[top--], $3);
+
+    endlist[++endtop]=nextstat;
+    emit_goto(endlist[top]);
+    ++nextstat;
+    backpatch(falselist[top--], nextstat);
+
 }
 
 while_bool: WHILE bool_exp{
+    $$=startstat;
 
+    emit_true(nextstat+2, $2);//条件为真，跳过假链
+    ++nextstat;
+
+    falselist[++top]=nextstat;
+    emit_goto(falselist[top]);//假链
+    ++nextstat;
+
+    truelist[++top]=nextstat;
+    emit_goto(truelist[top]);//真链
+    ++nextstat;
 }
 
+until_bool_exp: UNTIL bool_exp{
+    $$=startstat;
+
+    emit_true(nextstat+2, $2);//条件为真，跳过假链
+    ++nextstat;
+
+    falselist[++top]=nextstat;
+    emit_goto(falselist[top]);//假链
+    ++nextstat;
+
+    truelist[++top]=nextstat;
+    emit_goto(truelist[top]);//真链
+    ++nextstat;
+}
 
 ari_exp: ari_exp PLUS term{
     //<算术表达式> → <算术表达式> + <项>│<算术表达式> - <项>│<项>
@@ -506,10 +569,10 @@ void print_variable()
     }
 }
 
-Symbol* create_label(int label_number) {
+Symbol* create_label(int label_number, char* label) {
     // 创建一个新的标签符号并返回
     Symbol* label_symbol = (Symbol*)malloc(sizeof(Symbol));
-    strcpy(label_symbol->type, "LABEL");  // 修改这里，将类型设为 "LABEL"
+    strcpy(label_symbol->type, label);  // 修改这里，将类型设为 "LABEL"
     label_symbol->is_constant = 1;  // 将标签视为常量
     label_symbol->value.int_value = label_number;
     return label_symbol;
@@ -518,12 +581,12 @@ Symbol* create_label(int label_number) {
 
 void emit_goto(int target) {
     // 发出带有目标标签的GOTO四元式
-    emit("j ", NULL, NULL, create_label(target));
+    emit("j ", NULL, NULL, create_label(target, "LABEL"));
 }
 
 void emit_true(int target, Symbol* tmp)
 {
-    emit("=", tmp, &True, create_label(target));
+    emit("=", tmp, &True, create_label(target, "JAMP"));
 }
 
 void emit(const char* op, Symbol* left, Symbol* right, Symbol* result) {
@@ -553,7 +616,6 @@ void printQuadruple()
     Quadruple* current = quadruple_list;
     while(current!=NULL)
     {
-        printf("(%d) ",cnt++);
         printf("(%s, ", current->op);
         if(current->arg1==NULL) printf("-, ");
     else
@@ -618,5 +680,20 @@ void printQuadruple()
     }
     printf("\n");
     current=current->next;
+    }
+}
+
+void backpatch(int list, int target)
+{
+    //list是链所指向，target是目标
+    Quadruple* current = quadruple_list;
+    while(current!=NULL)
+    {
+        //printf("type: %s, value: %d\n", current->result->type, current->result->value.int_value);
+        if(strcmp(current->result->type, "LABEL")==0 && current->result->value.int_value==list)
+        {
+            current->result->value.int_value=target;//遍历链表，找到需要回填的四元式，回填
+        }
+        current=current->next;
     }
 }
