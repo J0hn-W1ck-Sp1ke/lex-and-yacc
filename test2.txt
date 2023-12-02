@@ -1,0 +1,14 @@
+program eaxmple2;
+var  A,B:integer;
+C,D:bool;
+E,F:char;
+begin
+  A := 'char';
+  B := A+10/2*A/5;
+  C := false or true and not false;
+  D := A>B and 2=B or  not(3<=3) or false;
+  E := 'aaabb';
+  G := E
+
+/*测试简单赋值语句语义审查的错误程序*/
+end.

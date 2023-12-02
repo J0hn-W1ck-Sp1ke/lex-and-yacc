@@ -1,0 +1,14 @@
+program eaxmple0;
+var  A,A:integer;
+C,A:bool;
+E,F:char;
+begin
+  A := 1+1*2;
+  A := A+10/2*A/5;
+  C := false or true and not false;
+  A := A>B and 2=B or  not(3<=3) or false;
+  E := 'aaabb';
+  F := E
+
+/*测试简单说明语句语义审查的错误程序*/
+end.

@@ -1,0 +1,14 @@
+program eaxmple0;
+var  A,B:integer;
+C,D:bool;
+E,F:char;
+begin
+  A := 1+1*2;
+  B := A+10/2*A/5;
+  C := false or true and not false;
+  D := A>B and 2=B or  not(3<=3) or false;
+  E := 'aaabb';
+  F := E
+
+/*测试简单赋值语句、简单说明语句、算术表达式、布尔表达式的正确程序*/
+end.
