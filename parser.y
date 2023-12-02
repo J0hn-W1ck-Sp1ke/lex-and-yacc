@@ -9,6 +9,8 @@ int yylex(void);
 void yyerror(const char* s);
 const char* no="NO";
 int line=0;
+int nextstat=0;
+int startstat=0;
 
 // 定义符号表项的值
 typedef union Value{
@@ -25,6 +27,8 @@ typedef struct Symbol {
 }Symbol;
 // 符号表的头指针
 Symbol* symbol_table = NULL;
+Symbol True;
+
 // 记录临时变量的数量
 int temp_variable_count = 0;
 // 符号表函数声明
@@ -37,70 +41,27 @@ void set_type(char* type);
 Symbol* find_variable(char* name);//寻找变量
 void print_variable();
 
-void emit(const char* op, Symbol* left, Symbol* right, Symbol* result)
-{
-    printf("(%s, ", op);
-    if(left==NULL) printf("-, ");
-    else
-    {
-        if(left->is_constant) 
-        {
-            if(strcmp(left->type, "INTEGER")==0)
-            {
-                 printf("%d, ", left->value.int_value);
-            }
-            else if(strcmp(left->type, "BOOL")==0)  
-            {
-                if(left->value.int_value) printf("true, "); 
-                else printf("false, ");
-            }
-            else printf("%s, ", left->value.char_value);
 
-        }
-        else printf("%s, ", left->name);
-    }
+// 定义Quadruple结构体
+typedef struct Quadruple {
+    char* op;
+    Symbol* arg1;
+    Symbol* arg2;
+    Symbol* result;
+    struct Quadruple* next;
+} Quadruple;
+// 在parser.y文件中添加全局变量
+Quadruple* quadruple_list = NULL;
 
-    if(right==NULL)printf("-, ");
-    else
-    {
-        if(right->is_constant) 
-        {
-            if(strcmp(right->type, "INTEGER")==0)
-            {
-                printf("%d, ", right->value.int_value);
-            }
-            else if(strcmp(right->type, "BOOL")==0)  
-            {
-                if(right->value.int_value) printf("true, "); 
-                else printf("false, ");
-            }
-            else printf("%s, ", right->value.char_value);
+Symbol* create_label(int label_number);
+// 添加新的辅助函数
+void emit_goto(int target);
+void emit_true(int target, Symbol* tmp);
+// 修改emit函数
+void emit(const char* op, Symbol* left, Symbol* right, Symbol* result);
+void backpatch(int list, int target);
+void printQuadruple();
 
-        }
-        else printf("%s, ", right->name);
-    }
-    
-
-    if(result==NULL) printf("-)");
-    else
-    {
-        if(result->is_constant) 
-        {
-            if(strcmp(result->type, "INTEGER")==0)
-            {
-                 printf("%d)", result->value.int_value);
-            }
-            else if(strcmp(result->type, "BOOL")==0)  
-            {
-                if(result->value.int_value) printf("true)"); 
-                else printf("false)");
-            }
-            else printf("%s)", result->value.char_value);
-        }
-        else printf("%s)", result->name);
-        }
-    printf("\n");
-}   
 
 %}
 
@@ -131,11 +92,12 @@ void emit(const char* op, Symbol* left, Symbol* right, Symbol* result)
 %type <sym> ari_exp term factor
 %type <sym> bool_exp bool_term bool_factor bool_constant
 %type <sym> char_exp id
-%type <sym> statement statement_list  
+%type <num> statement statement_list  //statement记录代码段开头
 %type <str> relational_op
 %type <str> id_list variable_type
 %type <str> INTEGER BOOL CHAR
 %type <str> ID CHAR_CONSTANT
+%type <num> if_bool while_bool
 
 
 %start program
@@ -196,34 +158,30 @@ id_list: ID COMMA id_list {
 statement: id ASSIGN ari_exp  {
     //<语句> → <赋值句>│<if句>│<while句>│<repeat句>│<复合句>
     
-    add_temp_variable($1->type);
-    $$=symbol_table;
-    if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1);
+    if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, printf("3: %d\n",$$), ++nextstat;
     else yyerror("Type error");
     }|
     id ASSIGN bool_exp {
-            add_temp_variable($1->type);
-            $$=symbol_table;
-            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1);
+            
+            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, printf("3: %d\n",$$), ++nextstat;
             else yyerror("Type error");
     }|
     id ASSIGN char_exp {
-            add_temp_variable($1->type);
-            $$=symbol_table;
-            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1);
+            
+            if(strcmp($1->type, $3->type)==0) emit($2, $3, NULL, $1), $$=startstat, startstat=nextstat+1, printf("3: %d\n",$$), ++nextstat;
             else yyerror("Type error");
             
     }|
-              IF bool_term THEN statement {
+              if_bool THEN statement {
                 //<if句>→ <布尔表达式> then <语句>│if <布尔表达式> then <语句> else <语句>
-                  
+                //if_bool时添加跳转语句 
               } |
-              IF bool_term THEN statement ELSE statement {
-                  
+              if_bool THEN statement ELSE statement {
+                  //if_bool时添加跳转语句
               } |
-              WHILE bool_term DO statement {
+              while_bool DO statement {
                 //<while句> → while <布尔表达式> do <语句>
-                  
+                //while_bool时添加跳转语句
               } |
               REPEAT statement UNTIL bool_term {
                 //<repeat句> → repeat <语句> until <布尔表达式>
@@ -231,33 +189,48 @@ statement: id ASSIGN ari_exp  {
               } |
               BEGINN statement_list END {
                 //<复合句> → begin <语句表> end
-                
+                $$=$2;
               }| error{
                 yyerror("Statement error");
               }
 
 statement_list: statement SEMICOLON statement_list {
     //<语句表> → <语句> ；<语句表>│<语句>
-
+    $$=startstat;
+    printf("1: %d\n",$$);
 } |
                 statement {
-                    
+                    $$=startstat;
+                    printf("2: %d\n",$$);
                 }
 
+if_bool: IF bool_exp{
+    
+    ++nextstat;
+    $$=nextstat;
+    emit_goto(nextstat);//真链
+    ++nextstat;
+    emit_goto(nextstat);//假链
+    ++nextstat;
+    
+}
 
+while_bool: WHILE bool_exp{
+
+}
 
 
 ari_exp: ari_exp PLUS term{
     //<算术表达式> → <算术表达式> + <项>│<算术表达式> - <项>│<项>
             add_temp_variable($1->type);
             $$=symbol_table;
-            if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$);
+            if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$), ++nextstat;
             else yyerror("Type error");
     }|
     ari_exp MINUS term{
         add_temp_variable($1->type);
         $$=symbol_table;
-        if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$);
+        if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$), ++nextstat;
         else yyerror("Type error");
     }|
     term{
@@ -271,13 +244,13 @@ term: factor {
          term TIMES factor {
             add_temp_variable($1->type);
             $$=symbol_table;
-            if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$);
+            if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$), ++nextstat;
             else yyerror("Type error");
          } |
          term DIVIDE factor {
             add_temp_variable($1->type);
             $$=symbol_table;
-            if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$);
+            if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$), ++nextstat;
             else yyerror("Type error");
          }
         //因子即是算术量
@@ -302,7 +275,7 @@ bool_exp: bool_exp OR bool_term{
     //<布尔表达式> → <布尔表达式> or <布尔项>│<布尔项>
         add_temp_variable($1->type);
         $$=symbol_table;
-        emit($2, $1, $3, $$);
+        emit($2, $1, $3, $$), ++nextstat;
     }|
     bool_term{
         $$=$1;
@@ -315,7 +288,7 @@ bool_term: bool_factor {
              bool_term AND bool_factor {
                 add_temp_variable($1->type);
                 $$=symbol_table;
-                emit($2, $1, $3, $$);
+                emit($2, $1, $3, $$), ++nextstat;
              }
 
 bool_factor: NOT bool_factor {
@@ -323,7 +296,7 @@ bool_factor: NOT bool_factor {
     //<布尔量> → <布尔常量>│<标识符>│（ <布尔表达式> ）│ <标识符> <关系符> <标识符>│<算术表达式> <关系符> <算术表达式>
     add_temp_variable($2->type);
     $$=symbol_table;
-    emit($1, $2, NULL, $$);
+    emit($1, $2, NULL, $$), ++nextstat;
 } |
                LPAREN bool_exp RPAREN {
                 $$=$2;
@@ -337,19 +310,19 @@ bool_factor: NOT bool_factor {
                id relational_op id{
                 add_temp_variable("BOOL");
                 $$=symbol_table;
-                if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$);
+                if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$), ++nextstat;
                 else yyerror("Type error");
                } |
                id relational_op ari_exp{
                 add_temp_variable("BOOL");
                 $$=symbol_table;
-                if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$);
+                if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$), ++nextstat;
                 else yyerror("Type error");
                } |
                ari_exp relational_op ari_exp {
                 add_temp_variable("BOOL");
                 $$=symbol_table;
-                if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$);
+                if(strcmp($1->type, $3->type)==0) emit($2, $1, $3, $$), ++nextstat;
                 else yyerror("Type error");
                }
 
@@ -368,19 +341,19 @@ bool_constant: TRUE{
 
 relational_op: LESS {
     //<关系符> → <│<>│<=│>=│>│=
-    $$ = strdup("<");
+    $$ = strdup("j<");
 } |
                LESSEQ {
-                   $$ = strdup("<=");
+                   $$ = strdup("j<=");
                } |
                GREATER {
-                   $$ = strdup(">");
+                   $$ = strdup("j>");
                } |
                GREATEREQ {
-                   $$ = strdup(">=");
+                   $$ = strdup("j>=");
                } |
                EQ {
-                   $$ = strdup("=");
+                   $$ = strdup("j=");
                }
 
 
@@ -418,12 +391,14 @@ int main() {
         fprintf(stderr, "Unable to open input file\n");
         return 1;
     }
-
+    True.is_constant=1;
+    True.value.int_value=1;
+    strcpy(True.type, "BOOL");
     yyparse();
 
     //print_variable();
     //generate_intermediate_code();
-
+    printQuadruple();
     fclose(yyin);
     system("pause");
     return 0;
@@ -528,5 +503,120 @@ void print_variable()
     while (current != NULL) {
         printf("name: %s ; type: %s ; is_constant: %d\n", current->name, current->type, current->is_constant);
         current = current->next;
+    }
+}
+
+Symbol* create_label(int label_number) {
+    // 创建一个新的标签符号并返回
+    Symbol* label_symbol = (Symbol*)malloc(sizeof(Symbol));
+    strcpy(label_symbol->type, "LABEL");  // 修改这里，将类型设为 "LABEL"
+    label_symbol->is_constant = 1;  // 将标签视为常量
+    label_symbol->value.int_value = label_number;
+    return label_symbol;
+}
+
+
+void emit_goto(int target) {
+    // 发出带有目标标签的GOTO四元式
+    emit("j ", NULL, NULL, create_label(target));
+}
+
+void emit_true(int target, Symbol* tmp)
+{
+    emit("=", tmp, &True, create_label(target));
+}
+
+void emit(const char* op, Symbol* left, Symbol* right, Symbol* result) {
+    // 创建一个新的四元式
+    Quadruple* new_quadruple = (Quadruple*)malloc(sizeof(Quadruple));
+    new_quadruple->op = strdup(op);
+    new_quadruple->arg1 = left;
+    new_quadruple->arg2 = right;
+    new_quadruple->result = result;
+    new_quadruple->next = NULL;
+
+    // 将新的四元式添加到四元式链表中
+    if (quadruple_list == NULL) {
+        quadruple_list = new_quadruple;
+    } else {
+        Quadruple* current = quadruple_list;
+        while (current->next != NULL) {
+            current = current->next;
+        }
+        current->next = new_quadruple;
+    }
+}
+
+void printQuadruple()
+{
+    int cnt=0;
+    Quadruple* current = quadruple_list;
+    while(current!=NULL)
+    {
+        printf("(%d) ",cnt++);
+        printf("(%s, ", current->op);
+        if(current->arg1==NULL) printf("-, ");
+    else
+    {
+        if(current->arg1->is_constant) 
+        {
+            if(strcmp(current->arg1->type, "INTEGER")==0)
+            {
+                 printf("%d, ", current->arg1->value.int_value);
+            }
+            else if(strcmp(current->arg1->type, "BOOL")==0)  
+            {
+                if(current->arg1->value.int_value) printf("true, "); 
+                else printf("false, ");
+            }
+            else printf("%s, ", current->arg1->value.char_value);
+
+        }
+        else printf("%s, ", current->arg1->name);
+    }
+
+    if(current->arg2==NULL)printf("-, ");
+    else
+    {
+        if(current->arg2->is_constant) 
+        {
+            if(strcmp(current->arg2->type, "INTEGER")==0)
+            {
+                printf("%d, ", current->arg2->value.int_value);
+            }
+            else if(strcmp(current->arg2->type, "BOOL")==0)  
+            {
+                if(current->arg2->value.int_value) printf("true, "); 
+                else printf("false, ");
+            }
+            else printf("%s, ", current->arg2->value.char_value);
+
+        }
+        else printf("%s, ", current->arg2->name);
+    }
+    
+
+    if(current->result==NULL) printf("-)");
+    else
+    {
+        if(current->result->is_constant) 
+        {
+            if(strcmp(current->result->type, "INTEGER")==0)
+            {
+                 printf("%d)", current->result->value.int_value);
+            }
+            else if(strcmp(current->result->type, "BOOL")==0)  
+            {
+                if(current->result->value.int_value) printf("true)"); 
+                else printf("false)");
+            }
+            else if(strcmp(current->result->type, "CHAR")==0)
+                printf("%s)", current->result->value.char_value);
+            else printf("%d)", current->result->value.int_value);
+        }
+        else printf("%s)", current->result->name);
+    }
+    printf("\n");
+    current=current->next;
     }
 }
